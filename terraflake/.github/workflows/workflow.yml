@@ -1,0 +1,99 @@
+name: "Snowflake Terraform Workflow"
+
+on: 
+  push:
+    branches:
+      - main
+  pull_request:
+
+jobs:
+  deploy-terraform-prod:
+    name: "Deploy Terraform plan on Prod"
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v2
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v2
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ap-southeast-2
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v2
+
+      - name: Setup Terraform Backend
+        id: backend
+        run: |
+          cat > backend.tf << EOF
+          terraform {
+            backend "s3" {
+              bucket         = "sanjidnet-tf-state-ap-southeast-2"
+              key            = "bootstrap/terraform.tfstate"
+              dynamodb_table = "dynamo"
+              region         = "ap-southeast-2"
+              encrypt        = "true"
+            }
+          }
+          EOF
+      
+      - name: Terraform Init
+        id: init
+        run: terraform init
+
+      - name: Terraform Validate
+        id: validate
+        run: terraform validate -no-color
+
+      - name: Terraform Plan on Prod for PR
+        id: plan
+        if: github.event_name == 'pull_request'
+        run: |
+          terraform plan -input=false -no-color \
+            -var snowflake_user_password='${{ secrets.SNOWFLAKE_PASSWORD }}' \
+            -var snowflake_account='${{ secrets.SNOWFLAKE_ACCOUNT }}' \
+            -var snowflake_region='${{ secrets.SNOWFLAKE_REGION }}'
+        continue-on-error: true
+
+      - name: Update Pull Request
+        uses: actions/github-script@v7
+        if: github.event_name == 'pull_request'
+        env:
+          PLAN: "${{ steps.plan.outputs.stdout }}"
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const output = `#### Terraform Format and Style 🖌\`${{ steps.fmt.outcome }}\`
+            #### Terraform Initialization ⚙️\`${{ steps.init.outcome }}\`
+            #### Terraform Plan 📖\`${{ steps.plan.outcome }}\`
+            #### Terraform Validation 🤖\`${{ steps.validate.outcome }}\`
+
+            <details><summary>Show Plan</summary>
+
+            </details>
+
+            *Pushed by: @${{ github.actor }}, Action: \`${{ github.event_name }}\`*`;
+
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: output
+            })
+
+      - name: Terraform Plan Status
+        if: steps.plan.outcome == 'failure'
+        run: exit 1
+
+      - name: Terraform Apply
+        id: apply
+        if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+        run: |
+          terraform apply -auto-approve -input=false \
+            -var snowflake_user_password='${{ secrets.SNOWFLAKE_PASSWORD }}' \
+            -var snowflake_account='${{ secrets.SNOWFLAKE_ACCOUNT }}' \
+            -var snowflake_region='${{ secrets.SNOWFLAKE_REGION }}'
