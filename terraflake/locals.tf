@@ -30,6 +30,7 @@ locals {
 
   system_users = {
     "TABLEAU_USER" = {}
+    "SOURCE_USER"  = {}
     "LOAD_USER"    = {}
   }
 

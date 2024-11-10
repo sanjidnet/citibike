@@ -55,6 +55,10 @@ module "system_role_grants" {
   source = "./modules/bulk_role_grants"
 
   grants = {
+    source_r = {
+      role_name = module.bulk_roles.roles["source_r"].name
+      users     = [module.system_users.users["SOURCE_USER"].name]
+    }
     tableau_r = {
       role_name = module.bulk_roles.roles["tableau_r"].name
       users     = [module.system_users.users["TABLEAU_USER"].name]
